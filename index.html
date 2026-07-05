@@ -154,10 +154,74 @@
             box-shadow: 0 1px 3px rgba(0,0,0,0.05);
         }
         #status-indicator { font-size: 12px; color: #888; margin-left: 10px; }
+        
+        button.logout-btn {
+            background: #e1e4e8;
+            border: none;
+            padding: 8px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        button.logout-btn:hover { background: #d1d4d8; }
+
+        /* Auth Screen Styles */
+        #auth-overlay {
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: var(--bg-color);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+        .auth-card {
+            background: var(--card-bg);
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            width: 100%;
+            max-width: 350px;
+            text-align: center;
+        }
+        .auth-card input {
+            width: 100%;
+            padding: 10px;
+            margin: 10px 0;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            box-sizing: border-box;
+        }
+        .auth-card button {
+            width: 100%;
+            padding: 10px;
+            background: #2ecc71;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 600;
+        }
+        .auth-card button:hover { background: #27ae60; }
+        .hidden { display: none !important; }
     </style>
 </head>
 <body>
 
+    <!-- Authentication Screen Overlay -->
+    <div id="auth-overlay">
+        <div class="auth-card">
+            <h2>Sign In</h2>
+            <p style="font-size: 14px; color: #666;">Access your annual leave dashboard</p>
+            <input type="email" id="auth-email" placeholder="Email Address">
+            <input type="password" id="auth-password" placeholder="Password">
+            <button id="btn-login">Login</button>
+            <p id="auth-error" style="color: var(--leave-color); font-size: 13px; margin-top: 10px;"></p>
+        </div>
+    </div>
+
+    <!-- Main Application UI -->
     <header>
         <div>
             <h1 id="year-title">Annual Leave Tracker</h1>
@@ -170,17 +234,20 @@
                 <div class="legend-item"><div class="box leave-full"></div> Full Day</div>
                 <div class="legend-item"><div class="box bh"></div> Bank Holiday</div>
             </div>
+            <button class="logout-btn" id="btn-logout">Logout</button>
         </div>
     </header>
 
     <div class="year-container loading" id="year-grid"></div>
 
     <script>
-        // 2. CONFIGURATION: Replace these values with your actual Supabase project keys
         const SUPABASE_URL = "https://rkmyccciruhlcoqprkdp.supabase.co";
         const SUPABASE_ANON_KEY = "sb_publishable_vLYh21F7wobULUe_lFo66Q_PJ4ZVBuT";
 
-        const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+        // Initialize client allowing local session storage persistence across tabs and refreshes
+        const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+            auth: { persistSession: true }
+        });
 
         const currentYear = new Date().getFullYear();
         document.getElementById('year-title').innerText = `${currentYear} Leave Tracker`;
@@ -193,7 +260,7 @@
         const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
         const dayNames = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"];
         
-        let savedLeave = {}; // Holds your state down from the cloud
+        let savedLeave = {}; 
 
         function updateStats() {
             let total = 0;
@@ -204,10 +271,9 @@
             document.getElementById('leave-count').innerText = total;
         }
 
-        // 3. CLOUD DATABASE SYNC LOGIC
+        // DATABASE SYNC LOGIC
         async function loadDataFromSupabase() {
             try {
-                // Updated to use supabaseClient
                 const { data, error } = await supabaseClient
                     .from('leave_days')
                     .select('date_str, leave_type');
@@ -235,25 +301,24 @@
             dayCell.classList.remove('leave-half', 'leave-full');
             document.getElementById('status-indicator').innerText = "Saving changes...";
 
-            if (!currentState) {
-                savedLeave[dateStr] = 'half';
-                dayCell.classList.add('leave-half');
-                
-                // Added onConflict to handle rewrites cleanly
-                await supabaseClient.from('leave_days').upsert({ date_str: dateStr, leave_type: 'half' }, { onConflict: 'date_str' });
-            } else if (currentState === 'half') {
-                savedLeave[dateStr] = 'full';
-                dayCell.classList.add('leave-full');
-                
-                // Added onConflict to handle rewrites cleanly
-                await supabaseClient.from('leave_days').upsert({ date_str: dateStr, leave_type: 'full' }, { onConflict: 'date_str' });
-            } else {
-                delete savedLeave[dateStr];
-                
-                await supabaseClient.from('leave_days').delete().eq('date_str', dateStr);
+            try {
+                if (!currentState) {
+                    savedLeave[dateStr] = 'half';
+                    dayCell.classList.add('leave-half');
+                    await supabaseClient.from('leave_days').upsert({ date_str: dateStr, leave_type: 'half' }, { onConflict: 'date_str' });
+                } else if (currentState === 'half') {
+                    savedLeave[dateStr] = 'full';
+                    dayCell.classList.add('leave-full');
+                    await supabaseClient.from('leave_days').upsert({ date_str: dateStr, leave_type: 'full' }, { onConflict: 'date_str' });
+                } else {
+                    delete savedLeave[dateStr];
+                    await supabaseClient.from('leave_days').delete().eq('date_str', dateStr);
+                }
+                document.getElementById('status-indicator').innerText = "Synced with cloud";
+            } catch (err) {
+                console.error("Write error:", err);
+                document.getElementById('status-indicator').innerText = "Error saving selection.";
             }
-
-            document.getElementById('status-indicator').innerText = "Synced with cloud";
             updateStats();
         }
 
@@ -327,8 +392,48 @@
             updateStats();
         }
 
-        // Initialize by pulling down the latest state from the database
-        loadDataFromSupabase();
+        // AUTHENTICATION INTERACTION LOGIC
+        const authOverlay = document.getElementById('auth-overlay');
+        const loginBtn = document.getElementById('btn-login');
+        const logoutBtn = document.getElementById('btn-logout');
+        const errorText = document.getElementById('auth-error');
+
+        async function checkUserSession() {
+            const { data: { session } } = await supabaseClient.auth.getSession();
+            if (session) {
+                authOverlay.classList.add('hidden');
+                loadDataFromSupabase();
+            } else {
+                authOverlay.classList.remove('hidden');
+                document.getElementById('year-grid').classList.add('loading');
+            }
+        }
+
+        loginBtn.addEventListener('click', async () => {
+            const email = document.getElementById('auth-email').value;
+            const password = document.getElementById('auth-password').value;
+            errorText.innerText = "";
+
+            const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password });
+            
+            if (error) {
+                errorText.innerText = error.message;
+            } else {
+                authOverlay.classList.add('hidden');
+                loadDataFromSupabase();
+            }
+        });
+
+        logoutBtn.addEventListener('click', async () => {
+            await supabaseClient.auth.signOut();
+            authOverlay.classList.remove('hidden');
+            document.getElementById('year-grid').classList.add('loading');
+            document.getElementById('auth-email').value = '';
+            document.getElementById('auth-password').value = '';
+        });
+
+        // Evaluate login context immediately on page render
+        checkUserSession();
     </script>
 </body>
 </html>
