@@ -3,6 +3,19 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <!-- Tells iOS to run the web page in full-screen standalone app mode -->
+    <meta name="apple-mobile-web-app-capable" content="yes">
+
+    <!-- Styles the status bar at the top of the screen (can be default, black, or black-translucent) -->
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+
+    <!-- Sets the name displayed right underneath the icon on the home screen -->
+    <meta name="apple-mobile-web-app-title" content="Leave Tracker">
+
+    <!-- Points to the image file used for the home screen app icon (180x180px works best) -->
+    <link rel="apple-touch-icon" href="icon.png">
+
     <title>Annual Leave Tracker</title>
     <!-- 1. Include the Supabase CDN Client Library -->
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.49.1/dist/umd/supabase.js"></script>    
