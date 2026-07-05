@@ -4,6 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Annual Leave Tracker</title>
+    <!-- 1. Include the Supabase CDN Client Library -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.49.1/dist/umd/supabase.js"></script>    
+
     <style>
         :root {
             --bg-color: #f4f6f9;
@@ -61,6 +64,13 @@
             gap: 20px;
             max-width: 1400px;
             margin: 0 auto;
+            opacity: 1;
+            transition: opacity 0.3s ease;
+        }
+        
+        .year-container.loading {
+            opacity: 0.4;
+            pointer-events: none;
         }
 
         @media (max-width: 1200px) { .year-container { grid-template-columns: repeat(3, 1fr); } }
@@ -104,10 +114,7 @@
             border: 1px solid transparent;
         }
 
-        .day:hover:not(.empty) {
-            background-color: #e9ecef;
-        }
-
+        .day:hover:not(.empty) { background-color: #e9ecef; }
         .empty { cursor: default; }
         .weekend { background-color: var(--weekend-bg); color: #a0a0a0; }
         
@@ -119,21 +126,17 @@
         .day.weekend.leave-half {
             background: linear-gradient(135deg, var(--leave-color) 50%, var(--weekend-bg) 50%) !important;
         }
-        
         .day.leave-full {
             background-color: var(--leave-color) !important;
             color: white;
             font-weight: bold;
         }
-        
         .day.bank-holiday {
             background-color: var(--bh-color) !important;
             color: #333;
             font-weight: bold;
             border-color: #e67e22;
         }
-        
-        /* Handling overlaps with bank holidays */
         .day.leave-half.bank-holiday {
             background: linear-gradient(135deg, var(--leave-color) 50%, var(--bh-color) 50%) !important;
         }
@@ -150,6 +153,7 @@
             border-radius: 8px;
             box-shadow: 0 1px 3px rgba(0,0,0,0.05);
         }
+        #status-indicator { font-size: 12px; color: #888; margin-left: 10px; }
     </style>
 </head>
 <body>
@@ -157,6 +161,7 @@
     <header>
         <div>
             <h1 id="year-title">Annual Leave Tracker</h1>
+            <span id="status-indicator">Connecting to cloud...</span>
         </div>
         <div style="display: flex; gap: 15px; align-items: center;">
             <div class="stats">Days Taken: <span id="leave-count">0</span></div>
@@ -168,9 +173,15 @@
         </div>
     </header>
 
-    <div class="year-container" id="year-grid"></div>
+    <div class="year-container loading" id="year-grid"></div>
 
     <script>
+        // 2. CONFIGURATION: Replace these values with your actual Supabase project keys
+        const SUPABASE_URL = "https://rkmyccciruhlcoqprkdp.supabase.co";
+        const SUPABASE_ANON_KEY = "sb_publishable_vLYh21F7wobULUe_lFo66Q_PJ4ZVBuT";
+
+        const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
         const currentYear = new Date().getFullYear();
         document.getElementById('year-title').innerText = `${currentYear} Leave Tracker`;
 
@@ -181,14 +192,8 @@
 
         const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
         const dayNames = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"];
-
-        // Load saved leave from LocalStorage (now mapping dates to status strings: 'half' or 'full')
-        let savedLeave = JSON.parse(localStorage.getItem(`leave_v2_${currentYear}`)) || {};
-
-        function saveToStorage() {
-            localStorage.setItem(`leave_v2_${currentYear}`, JSON.stringify(savedLeave));
-            updateStats();
-        }
+        
+        let savedLeave = {}; // Holds your state down from the cloud
 
         function updateStats() {
             let total = 0;
@@ -199,25 +204,57 @@
             document.getElementById('leave-count').innerText = total;
         }
 
-        function cycleLeaveState(dateStr, dayCell) {
-            const currentState = savedLeave[dateStr];
+        // 3. CLOUD DATABASE SYNC LOGIC
+        async function loadDataFromSupabase() {
+            try {
+                // Updated to use supabaseClient
+                const { data, error } = await supabaseClient
+                    .from('leave_days')
+                    .select('date_str, leave_type');
 
-            // Remove existing leave classes completely to reset state clean
+                if (error) throw error;
+
+                savedLeave = {};
+                if (data) {
+                    data.forEach(row => {
+                        savedLeave[row.date_str] = row.leave_type;
+                    });
+                }
+                
+                document.getElementById('status-indicator').innerText = "Synced with cloud";
+                document.getElementById('year-grid').classList.remove('loading');
+                generateCalendar();
+            } catch (err) {
+                console.error("Error loading data:", err);
+                document.getElementById('status-indicator').innerText = "Error syncing data.";
+            }
+        }
+
+        async function cycleLeaveState(dateStr, dayCell) {
+            const currentState = savedLeave[dateStr];
             dayCell.classList.remove('leave-half', 'leave-full');
+            document.getElementById('status-indicator').innerText = "Saving changes...";
 
             if (!currentState) {
-                // 1 Click -> Half Day
                 savedLeave[dateStr] = 'half';
                 dayCell.classList.add('leave-half');
+                
+                // Added onConflict to handle rewrites cleanly
+                await supabaseClient.from('leave_days').upsert({ date_str: dateStr, leave_type: 'half' }, { onConflict: 'date_str' });
             } else if (currentState === 'half') {
-                // 2 Clicks -> Full Day
                 savedLeave[dateStr] = 'full';
                 dayCell.classList.add('leave-full');
+                
+                // Added onConflict to handle rewrites cleanly
+                await supabaseClient.from('leave_days').upsert({ date_str: dateStr, leave_type: 'full' }, { onConflict: 'date_str' });
             } else {
-                // 3 Clicks -> Clear State
                 delete savedLeave[dateStr];
+                
+                await supabaseClient.from('leave_days').delete().eq('date_str', dateStr);
             }
-            saveToStorage();
+
+            document.getElementById('status-indicator').innerText = "Synced with cloud";
+            updateStats();
         }
 
         function generateCalendar() {
@@ -271,7 +308,6 @@
                         dayCell.classList.add('bank-holiday');
                     }
 
-                    // Apply existing states from storage
                     if (savedLeave[dateStr] === 'half') {
                         dayCell.classList.add('leave-half');
                     } else if (savedLeave[dateStr] === 'full') {
@@ -291,7 +327,8 @@
             updateStats();
         }
 
-        generateCalendar();
+        // Initialize by pulling down the latest state from the database
+        loadDataFromSupabase();
     </script>
 </body>
 </html>
