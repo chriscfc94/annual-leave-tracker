@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Annual Leave Tracker</title>
+    <style>
+        :root {
+            --bg-color: #f4f6f9;
+            --card-bg: #ffffff;
+            --text-color: #333333;
+            --border-color: #e1e4e8;
+            --leave-color: #ff7675;
+            --bh-color: #ffeaa7;
+            --weekend-bg: #f8f9fa;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            margin: 0;
+            padding: 20px;
+        }
+
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            max-width: 1400px;
+            margin: 0 auto 20px auto;
+        }
+
+        h1 { margin: 0; font-size: 24px; }
+
+        .legend {
+            display: flex;
+            gap: 20px;
+            background: var(--card-bg);
+            padding: 10px 15px;
+            border-radius: 8px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+            font-size: 14px;
+        }
+
+        .legend-item { display: flex; align-items: center; gap: 8px; }
+        
+        .box {
+            width: 16px;
+            height: 16px;
+            border-radius: 4px;
+            border: 1px solid var(--border-color);
+        }
+        .box.leave-half { background: linear-gradient(135deg, var(--leave-color) 50%, #fff 50%); }
+        .box.leave-full { background-color: var(--leave-color); }
+        .box.bh { background-color: var(--bh-color); }
+
+        .year-container {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 20px;
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        @media (max-width: 1200px) { .year-container { grid-template-columns: repeat(3, 1fr); } }
+        @media (max-width: 900px) { .year-container { grid-template-columns: repeat(2, 1fr); } }
+        @media (max-width: 600px) { .year-container { grid-template-columns: 1fr; } }
+
+        .month-card {
+            background: var(--card-bg);
+            border-radius: 10px;
+            padding: 15px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.02), 0 1px 3px rgba(0,0,0,0.08);
+        }
+
+        .month-title {
+            text-align: center;
+            font-weight: 600;
+            margin-bottom: 10px;
+            font-size: 16px;
+        }
+
+        .days-grid {
+            display: grid;
+            grid-template-columns: repeat(7, 1fr);
+            gap: 4px;
+            text-align: center;
+            font-size: 12px;
+        }
+
+        .day-name {
+            font-weight: 600;
+            color: #888;
+            padding-bottom: 5px;
+        }
+
+        .day {
+            padding: 6px 0;
+            border-radius: 4px;
+            cursor: pointer;
+            user-select: none;
+            transition: background-color 0.1s ease;
+            border: 1px solid transparent;
+        }
+
+        .day:hover:not(.empty) {
+            background-color: #e9ecef;
+        }
+
+        .empty { cursor: default; }
+        .weekend { background-color: var(--weekend-bg); color: #a0a0a0; }
+        
+        /* State Colors */
+        .day.leave-half {
+            background: linear-gradient(135deg, var(--leave-color) 50%, var(--card-bg) 50%) !important;
+            font-weight: bold;
+        }
+        .day.weekend.leave-half {
+            background: linear-gradient(135deg, var(--leave-color) 50%, var(--weekend-bg) 50%) !important;
+        }
+        
+        .day.leave-full {
+            background-color: var(--leave-color) !important;
+            color: white;
+            font-weight: bold;
+        }
+        
+        .day.bank-holiday {
+            background-color: var(--bh-color) !important;
+            color: #333;
+            font-weight: bold;
+            border-color: #e67e22;
+        }
+        
+        /* Handling overlaps with bank holidays */
+        .day.leave-half.bank-holiday {
+            background: linear-gradient(135deg, var(--leave-color) 50%, var(--bh-color) 50%) !important;
+        }
+        .day.leave-full.bank-holiday {
+            background: linear-gradient(135deg, var(--leave-color) 70%, var(--bh-color) 30%) !important;
+            color: white;
+        }
+
+        .stats {
+            font-size: 16px;
+            font-weight: 500;
+            background: var(--card-bg);
+            padding: 10px 15px;
+            border-radius: 8px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+        }
+    </style>
+</head>
+<body>
+
+    <header>
+        <div>
+            <h1 id="year-title">Annual Leave Tracker</h1>
+        </div>
+        <div style="display: flex; gap: 15px; align-items: center;">
+            <div class="stats">Days Taken: <span id="leave-count">0</span></div>
+            <div class="legend">
+                <div class="legend-item"><div class="box leave-half"></div> Half Day</div>
+                <div class="legend-item"><div class="box leave-full"></div> Full Day</div>
+                <div class="legend-item"><div class="box bh"></div> Bank Holiday</div>
+            </div>
+        </div>
+    </header>
+
+    <div class="year-container" id="year-grid"></div>
+
+    <script>
+        const currentYear = new Date().getFullYear();
+        document.getElementById('year-title').innerText = `${currentYear} Leave Tracker`;
+
+        const bankHolidays = [
+            "2026-01-01", "2026-04-03", "2026-04-06", "2026-05-04", 
+            "2026-05-25", "2026-08-31", "2026-12-25", "2026-12-28"
+        ];
+
+        const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+        const dayNames = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"];
+
+        // Load saved leave from LocalStorage (now mapping dates to status strings: 'half' or 'full')
+        let savedLeave = JSON.parse(localStorage.getItem(`leave_v2_${currentYear}`)) || {};
+
+        function saveToStorage() {
+            localStorage.setItem(`leave_v2_${currentYear}`, JSON.stringify(savedLeave));
+            updateStats();
+        }
+
+        function updateStats() {
+            let total = 0;
+            for (const key in savedLeave) {
+                if (savedLeave[key] === 'full') total += 1;
+                if (savedLeave[key] === 'half') total += 0.5;
+            }
+            document.getElementById('leave-count').innerText = total;
+        }
+
+        function cycleLeaveState(dateStr, dayCell) {
+            const currentState = savedLeave[dateStr];
+
+            // Remove existing leave classes completely to reset state clean
+            dayCell.classList.remove('leave-half', 'leave-full');
+
+            if (!currentState) {
+                // 1 Click -> Half Day
+                savedLeave[dateStr] = 'half';
+                dayCell.classList.add('leave-half');
+            } else if (currentState === 'half') {
+                // 2 Clicks -> Full Day
+                savedLeave[dateStr] = 'full';
+                dayCell.classList.add('leave-full');
+            } else {
+                // 3 Clicks -> Clear State
+                delete savedLeave[dateStr];
+            }
+            saveToStorage();
+        }
+
+        function generateCalendar() {
+            const container = document.getElementById('year-grid');
+            container.innerHTML = '';
+
+            for (let month = 0; month < 12; month++) {
+                const card = document.createElement('div');
+                card.className = 'month-card';
+
+                const title = document.createElement('div');
+                title.className = 'month-title';
+                title.innerText = monthNames[month];
+                card.appendChild(title);
+
+                const grid = document.createElement('div');
+                grid.className = 'days-grid';
+
+                dayNames.forEach(name => {
+                    const header = document.createElement('div');
+                    header.className = 'day-name';
+                    header.innerText = name;
+                    grid.appendChild(header);
+                });
+
+                let firstDayIdx = new Date(currentYear, month, 1).getDay();
+                firstDayIdx = firstDayIdx === 0 ? 6 : firstDayIdx - 1;
+
+                const daysInMonth = new Date(currentYear, month + 1, 0).getDate();
+
+                for (let i = 0; i < firstDayIdx; i++) {
+                    const emptyCell = document.createElement('div');
+                    emptyCell.className = 'day empty';
+                    grid.appendChild(emptyCell);
+                }
+
+                for (let day = 1; day <= daysInMonth; day++) {
+                    const dayCell = document.createElement('div');
+                    dayCell.className = 'day';
+                    dayCell.innerText = day;
+
+                    const dateObj = new Date(currentYear, month, day);
+                    const dayOfWeek = dateObj.getDay();
+                    const dateStr = `${currentYear}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+
+                    if (dayOfWeek === 6 || dayOfWeek === 0) {
+                        dayCell.classList.add('weekend');
+                    }
+
+                    if (bankHolidays.includes(dateStr)) {
+                        dayCell.classList.add('bank-holiday');
+                    }
+
+                    // Apply existing states from storage
+                    if (savedLeave[dateStr] === 'half') {
+                        dayCell.classList.add('leave-half');
+                    } else if (savedLeave[dateStr] === 'full') {
+                        dayCell.classList.add('leave-full');
+                    }
+
+                    dayCell.addEventListener('click', () => {
+                        cycleLeaveState(dateStr, dayCell);
+                    });
+
+                    grid.appendChild(dayCell);
+                }
+
+                card.appendChild(grid);
+                container.appendChild(card);
+            }
+            updateStats();
+        }
+
+        generateCalendar();
+    </script>
+</body>
+</html>
