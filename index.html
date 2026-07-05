@@ -301,18 +301,30 @@
             dayCell.classList.remove('leave-half', 'leave-full');
             document.getElementById('status-indicator').innerText = "Saving changes...";
 
+            // Get the current logged-in user's ID dynamically
+            const { data: { user } } = await supabaseClient.auth.getUser();
+
             try {
                 if (!currentState) {
                     savedLeave[dateStr] = 'half';
                     dayCell.classList.add('leave-half');
-                    await supabaseClient.from('leave_days').upsert({ date_str: dateStr, leave_type: 'half' }, { onConflict: 'date_str' });
+                    await supabaseClient.from('leave_days').upsert(
+                        { date_str: dateStr, leave_type: 'half', user_id: user.id }, 
+                        { onConflict: 'user_id,date_str' } // Updated target
+                    );
                 } else if (currentState === 'half') {
                     savedLeave[dateStr] = 'full';
                     dayCell.classList.add('leave-full');
-                    await supabaseClient.from('leave_days').upsert({ date_str: dateStr, leave_type: 'full' }, { onConflict: 'date_str' });
+                    await supabaseClient.from('leave_days').upsert(
+                        { date_str: dateStr, leave_type: 'full', user_id: user.id }, 
+                        { onConflict: 'user_id,date_str' } // Updated target
+                    );
                 } else {
                     delete savedLeave[dateStr];
-                    await supabaseClient.from('leave_days').delete().eq('date_str', dateStr);
+                    await supabaseClient.from('leave_days')
+                        .delete()
+                        .eq('date_str', dateStr)
+                        .eq('user_id', user.id); // Securely scope the delete
                 }
                 document.getElementById('status-indicator').innerText = "Synced with cloud";
             } catch (err) {
