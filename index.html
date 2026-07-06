@@ -77,6 +77,44 @@
         }
 
         .legend-item { display: flex; align-items: center; gap: 8px; }
+
+        .allowance-control {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background: var(--card-bg);
+            padding: 8px 12px;
+            border-radius: 8px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+            border: 1px solid rgba(0,0,0,0.03);
+        }
+
+        .allowance-control span {
+            font-size: 13px;
+            font-weight: 600;
+            color: #666;
+            white-space: nowrap;
+        }
+
+        .allowance-control input {
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            padding: 6px 8px;
+            font-size: 14px;
+            background: white;
+            width: 70px;
+            text-align: center;
+        }
+
+        .allowance-status {
+            font-size: 12px;
+            color: #666;
+        }
+
+        .allowance-status.warning {
+            color: var(--leave-color);
+            font-weight: 600;
+        }
         
         .box {
             width: 16px;
@@ -237,10 +275,15 @@
             }
 
             .stats,
-            .legend {
+            .legend,
+            .allowance-control {
                 width: 100%;
                 justify-content: center;
                 box-sizing: border-box;
+            }
+
+            .allowance-control {
+                justify-content: space-between;
             }
 
             .legend {
@@ -320,7 +363,12 @@
             <span id="status-indicator">Connecting to cloud...</span>
         </div>
         <div class="header-actions">
-            <div class="stats">Days Taken: <span id="leave-count">0</span></div>
+            <div class="stats">Used: <span id="leave-count">0</span> / <span id="allowance-display">25</span> days</div>
+            <label class="allowance-control" for="allowance-input">
+                <span>Allowance</span>
+                <input id="allowance-input" type="number" min="20" max="40" step="1" value="25" aria-label="Annual leave allowance">
+            </label>
+            <div class="allowance-status" id="allowance-status">25 days remaining</div>
             <div class="legend">
                 <div class="legend-item"><div class="box today"></div> Today</div>
                 <div class="legend-item"><div class="box leave-half"></div> Half Day</div>
@@ -356,14 +404,70 @@
         const dayNames = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"];
         
         let savedLeave = {}; 
+        let allowanceDays = 25;
+        const allowanceInput = document.getElementById('allowance-input');
+        const allowanceDisplay = document.getElementById('allowance-display');
+        const allowanceStatus = document.getElementById('allowance-status');
 
-        function updateStats() {
+        allowanceInput.value = allowanceDays;
+
+        function getLeaveTotal() {
             let total = 0;
             for (const key in savedLeave) {
                 if (savedLeave[key] === 'full') total += 1;
                 if (savedLeave[key] === 'half') total += 0.5;
             }
-            document.getElementById('leave-count').innerText = total;
+            return total;
+        }
+
+        function updateStats() {
+            const total = getLeaveTotal();
+            document.getElementById('leave-count').innerText = total.toFixed(1).replace(/\.0$/, '');
+            allowanceDisplay.innerText = allowanceDays;
+
+            const remaining = allowanceDays - total;
+            const suffix = Math.abs(remaining) === 1 ? 'day' : 'days';
+            allowanceStatus.innerText = remaining >= 0
+                ? `${remaining} ${suffix} remaining`
+                : `${Math.abs(remaining)} ${suffix} over`;
+            allowanceStatus.classList.toggle('warning', remaining < 0);
+        }
+
+        async function loadAllowanceFromSupabase() {
+            try {
+                const { data: { user } } = await supabaseClient.auth.getUser();
+                if (!user) return;
+
+                const { data, error } = await supabaseClient
+                    .from('user_settings')
+                    .select('allowance_days')
+                    .eq('user_id', user.id)
+                    .maybeSingle();
+
+                if (error) throw error;
+                if (data && data.allowance_days) {
+                    allowanceDays = Number(data.allowance_days);
+                    allowanceInput.value = allowanceDays;
+                    updateStats();
+                }
+            } catch (err) {
+                console.warn('Allowance sync unavailable:', err);
+            }
+        }
+
+        async function saveAllowanceToSupabase() {
+            try {
+                const { data: { user } } = await supabaseClient.auth.getUser();
+                if (!user) return;
+
+                await supabaseClient.from('user_settings').upsert({
+                    user_id: user.id,
+                    allowance_days: allowanceDays,
+                    updated_at: new Date().toISOString()
+                }, { onConflict: 'user_id' });
+            } catch (err) {
+                console.warn('Could not sync allowance to Supabase:', err);
+            }
         }
 
         // DATABASE SYNC LOGIC
@@ -384,6 +488,7 @@
                 
                 document.getElementById('status-indicator').innerText = "Synced with cloud";
                 document.getElementById('year-grid').classList.remove('loading');
+                await loadAllowanceFromSupabase();
                 generateCalendar();
             } catch (err) {
                 console.error("Error loading data:", err);
@@ -393,6 +498,17 @@
 
         async function cycleLeaveState(dateStr, dayCell) {
             const currentState = savedLeave[dateStr];
+            const nextState = !currentState ? 'half' : currentState === 'half' ? 'full' : null;
+
+            if (nextState) {
+                const projectedTotal = getLeaveTotal() + 0.5;
+                if (projectedTotal > allowanceDays + 0.0001) {
+                    document.getElementById('status-indicator').innerText = `Allowance limit reached (${allowanceDays} days)`;
+                    updateStats();
+                    return;
+                }
+            }
+
             dayCell.classList.remove('leave-half', 'leave-full');
             document.getElementById('status-indicator').innerText = "Saving changes...";
 
@@ -533,6 +649,16 @@
                 authOverlay.classList.add('hidden');
                 loadDataFromSupabase();
             }
+        });
+
+        allowanceInput.addEventListener('change', async () => {
+            const parsedValue = Number(allowanceInput.value);
+            const clampedValue = Math.min(40, Math.max(20, Math.round(parsedValue)));
+            allowanceDays = clampedValue;
+            allowanceInput.value = allowanceDays;
+            updateStats();
+            await saveAllowanceToSupabase();
+            document.getElementById('status-indicator').innerText = `Allowance set to ${allowanceDays} days`;
         });
 
         logoutBtn.addEventListener('click', async () => {
