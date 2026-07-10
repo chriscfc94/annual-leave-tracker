@@ -210,6 +210,20 @@
             color: white;
             font-weight: bold;
         }
+        .day.pending-half {
+            background: linear-gradient(135deg, rgba(10, 150, 244, 0.5) 50%, var(--card-bg) 50%) !important;
+            font-weight: bold;
+            border-color: rgba(10, 150, 244, 0.35);
+        }
+        .day.weekend.pending-half {
+            background: linear-gradient(135deg, rgba(10, 150, 244, 0.5) 50%, var(--weekend-bg) 50%) !important;
+        }
+        .day.pending-full {
+            background-color: rgba(10, 150, 244, 0.5) !important;
+            color: white;
+            font-weight: bold;
+            border-color: rgba(10, 150, 244, 0.6);
+        }
         .day.bank-holiday {
             background-color: var(--bh-color) !important;
             color: #333;
@@ -411,25 +425,49 @@
 
         allowanceInput.value = allowanceDays;
 
+        function getEntryValue(entryType) {
+            switch (entryType) {
+                case 'half':
+                case 'pending-half':
+                    return 0.5;
+                case 'full':
+                case 'pending-full':
+                    return 1;
+                default:
+                    return 0;
+            }
+        }
+
         function getLeaveTotal() {
             let total = 0;
             for (const key in savedLeave) {
-                if (savedLeave[key] === 'full') total += 1;
-                if (savedLeave[key] === 'half') total += 0.5;
+                total += getEntryValue(savedLeave[key]);
             }
             return total;
         }
 
+        function getPendingCount() {
+            let pendingCount = 0;
+            for (const key in savedLeave) {
+                if (savedLeave[key] === 'pending-half' || savedLeave[key] === 'pending-full') {
+                    pendingCount += 1;
+                }
+            }
+            return pendingCount;
+        }
+
         function updateStats() {
             const total = getLeaveTotal();
+            const pendingCount = getPendingCount();
             document.getElementById('leave-count').innerText = total.toFixed(1).replace(/\.0$/, '');
             allowanceDisplay.innerText = allowanceDays;
 
             const remaining = allowanceDays - total;
             const suffix = Math.abs(remaining) === 1 ? 'day' : 'days';
+            const pendingText = pendingCount > 0 ? ` (${pendingCount} pending)` : '';
             allowanceStatus.innerText = remaining >= 0
-                ? `${remaining} ${suffix} remaining`
-                : `${Math.abs(remaining)} ${suffix} over`;
+                ? `${remaining} ${suffix} remaining${pendingText}`
+                : `${Math.abs(remaining)} ${suffix} over${pendingText}`;
             allowanceStatus.classList.toggle('warning', remaining < 0);
         }
 
@@ -498,10 +536,19 @@
 
         async function cycleLeaveState(dateStr, dayCell) {
             const currentState = savedLeave[dateStr];
-            const nextState = !currentState ? 'half' : currentState === 'half' ? 'full' : null;
+            const currentValue = getEntryValue(currentState);
+            const nextState = !currentState
+                ? 'pending-half'
+                : currentState === 'pending-half'
+                    ? 'pending-full'
+                    : currentState === 'pending-full'
+                        ? 'half'
+                        : currentState === 'half'
+                            ? 'full'
+                            : null;
 
             if (nextState) {
-                const projectedTotal = getLeaveTotal() + 0.5;
+                const projectedTotal = getLeaveTotal() + getEntryValue(nextState) - currentValue;
                 if (projectedTotal > allowanceDays + 0.0001) {
                     document.getElementById('status-indicator').innerText = `Allowance limit reached (${allowanceDays} days)`;
                     updateStats();
@@ -509,33 +556,46 @@
                 }
             }
 
-            dayCell.classList.remove('leave-half', 'leave-full');
+            dayCell.classList.remove('leave-half', 'leave-full', 'pending-half', 'pending-full');
             document.getElementById('status-indicator').innerText = "Saving changes...";
 
-            // Get the current logged-in user's ID dynamically
             const { data: { user } } = await supabaseClient.auth.getUser();
 
             try {
                 if (!currentState) {
+                    savedLeave[dateStr] = 'pending-half';
+                    dayCell.classList.add('pending-half');
+                    await supabaseClient.from('leave_days').upsert(
+                        { date_str: dateStr, leave_type: 'pending-half', user_id: user.id },
+                        { onConflict: 'user_id,date_str' }
+                    );
+                } else if (currentState === 'pending-half') {
+                    savedLeave[dateStr] = 'pending-full';
+                    dayCell.classList.add('pending-full');
+                    await supabaseClient.from('leave_days').upsert(
+                        { date_str: dateStr, leave_type: 'pending-full', user_id: user.id },
+                        { onConflict: 'user_id,date_str' }
+                    );
+                } else if (currentState === 'pending-full') {
                     savedLeave[dateStr] = 'half';
                     dayCell.classList.add('leave-half');
                     await supabaseClient.from('leave_days').upsert(
-                        { date_str: dateStr, leave_type: 'half', user_id: user.id }, 
-                        { onConflict: 'user_id,date_str' } // Updated target
+                        { date_str: dateStr, leave_type: 'half', user_id: user.id },
+                        { onConflict: 'user_id,date_str' }
                     );
                 } else if (currentState === 'half') {
                     savedLeave[dateStr] = 'full';
                     dayCell.classList.add('leave-full');
                     await supabaseClient.from('leave_days').upsert(
-                        { date_str: dateStr, leave_type: 'full', user_id: user.id }, 
-                        { onConflict: 'user_id,date_str' } // Updated target
+                        { date_str: dateStr, leave_type: 'full', user_id: user.id },
+                        { onConflict: 'user_id,date_str' }
                     );
                 } else {
                     delete savedLeave[dateStr];
                     await supabaseClient.from('leave_days')
                         .delete()
                         .eq('date_str', dateStr)
-                        .eq('user_id', user.id); // Securely scope the delete
+                        .eq('user_id', user.id);
                 }
                 document.getElementById('status-indicator').innerText = "Synced with cloud";
             } catch (err) {
@@ -600,7 +660,11 @@
                         dayCell.classList.add('today');
                     }
 
-                    if (savedLeave[dateStr] === 'half') {
+                    if (savedLeave[dateStr] === 'pending-half') {
+                        dayCell.classList.add('pending-half');
+                    } else if (savedLeave[dateStr] === 'pending-full') {
+                        dayCell.classList.add('pending-full');
+                    } else if (savedLeave[dateStr] === 'half') {
                         dayCell.classList.add('leave-half');
                     } else if (savedLeave[dateStr] === 'full') {
                         dayCell.classList.add('leave-full');
