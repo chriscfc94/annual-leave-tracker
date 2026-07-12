@@ -41,8 +41,23 @@
             background-color: var(--bg-color);
             color: var(--text-color);
             margin: 0;
-            padding: 20px;
+            padding: 0;
+            height: 100vh;
+            overflow: hidden;
             -webkit-font-smoothing: antialiased;
+        }
+
+        @media (min-width: 901px) {
+            body {
+                overflow: hidden;
+            }
+        }
+
+        .app-shell {
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
         }
 
         header {
@@ -52,8 +67,19 @@
             flex-wrap: wrap;
             gap: 12px;
             max-width: 1400px;
-            margin: 0 auto 20px auto;
-            padding: 4px 0;
+            width: 100%;
+            margin: 0 auto;
+            padding: 20px 20px 12px;
+            box-sizing: border-box;
+            background: var(--bg-color);
+        }
+
+        @media (min-width: 901px) {
+            header {
+                position: sticky;
+                top: 0;
+                z-index: 100;
+            }
         }
 
         h1 { margin: 0; font-size: 24px; line-height: 1.2; }
@@ -137,9 +163,20 @@
             grid-template-columns: repeat(4, 1fr);
             gap: 20px;
             max-width: 1400px;
+            width: 100%;
             margin: 0 auto;
+            padding: 0 20px 20px;
+            box-sizing: border-box;
             opacity: 1;
             transition: opacity 0.3s ease;
+            flex: 1;
+            min-height: 0;
+        }
+
+        @media (min-width: 901px) {
+            .year-container {
+                overflow-y: auto;
+            }
         }
         
         .year-container.loading {
@@ -237,6 +274,18 @@
             background: linear-gradient(135deg, var(--leave-color) 70%, var(--bh-color) 30%) !important;
             color: white;
         }
+        .day.pending-half.bank-holiday {
+            background: linear-gradient(135deg, rgba(10, 150, 244, 0.5) 50%, var(--bh-color) 50%) !important;
+            color: #333;
+        }
+        .day.weekend.pending-half.bank-holiday {
+            background: linear-gradient(135deg, rgba(10, 150, 244, 0.5) 50%, var(--bh-color) 50%) !important;
+            color: #333;
+        }
+        .day.pending-full.bank-holiday {
+            background: linear-gradient(135deg, rgba(10, 150, 244, 0.5) 70%, var(--bh-color) 30%) !important;
+            color: white;
+        }
 
         .stats {
             font-size: 16px;
@@ -267,6 +316,10 @@
             .header-actions {
                 width: 100%;
                 justify-content: space-between;
+            }
+
+            .year-container {
+                overflow-y: auto;
             }
         }
 
@@ -371,29 +424,31 @@
     </div>
 
     <!-- Main Application UI -->
-    <header>
-        <div>
-            <h1 id="year-title">Annual Leave Tracker</h1>
-            <span id="status-indicator">Connecting to cloud...</span>
-        </div>
-        <div class="header-actions">
-            <div class="stats">Used: <span id="leave-count">0</span> / <span id="allowance-display">25</span> days</div>
-            <label class="allowance-control" for="allowance-input">
-                <span>Allowance</span>
-                <input id="allowance-input" type="number" min="20" max="40" step="1" value="25" aria-label="Annual leave allowance">
-            </label>
-            <div class="allowance-status" id="allowance-status">25 days remaining</div>
-            <div class="legend">
-                <div class="legend-item"><div class="box today"></div> Today</div>
-                <div class="legend-item"><div class="box leave-half"></div> Half Day</div>
-                <div class="legend-item"><div class="box leave-full"></div> Full Day</div>
-                <div class="legend-item"><div class="box bh"></div> Bank Holiday</div>
+    <div class="app-shell">
+        <header>
+            <div>
+                <h1 id="year-title">Annual Leave Tracker</h1>
+                <span id="status-indicator">Connecting to cloud...</span>
             </div>
-            <button class="logout-btn" id="btn-logout">Logout</button>
-        </div>
-    </header>
+            <div class="header-actions">
+                <div class="stats">Used: <span id="leave-count">0</span> / <span id="allowance-display">25</span> days</div>
+                <label class="allowance-control" for="allowance-input">
+                    <span>Allowance</span>
+                    <input id="allowance-input" type="number" min="20" max="40" step="1" value="25" aria-label="Annual leave allowance">
+                </label>
+                <div class="allowance-status" id="allowance-status">25 days remaining</div>
+                <div class="legend">
+                    <div class="legend-item"><div class="box today"></div> Today</div>
+                    <div class="legend-item"><div class="box leave-half"></div> Half Day</div>
+                    <div class="legend-item"><div class="box leave-full"></div> Full Day</div>
+                    <div class="legend-item"><div class="box bh"></div> Bank Holiday</div>
+                </div>
+                <button class="logout-btn" id="btn-logout">Logout</button>
+            </div>
+        </header>
 
-    <div class="year-container loading" id="year-grid"></div>
+        <div class="year-container loading" id="year-grid"></div>
+    </div>
 
     <script>
         const SUPABASE_URL = "https://rkmyccciruhlcoqprkdp.supabase.co";
