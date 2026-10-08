@@ -576,6 +576,7 @@
         function getLeaveTotal() {
             let total = 0;
             for (const key in savedLeave) {
+                if (!key.startsWith(`${selectedYear}-`)) continue;
                 total += getEntryValue(savedLeave[key]);
             }
             return total;
@@ -584,6 +585,7 @@
         function getPendingCount() {
             let pendingCount = 0;
             for (const key in savedLeave) {
+                if (!key.startsWith(`${selectedYear}-`)) continue;
                 if (savedLeave[key] === 'pending-half' || savedLeave[key] === 'pending-full') {
                     pendingCount += 1;
                 }
