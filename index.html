@@ -132,6 +132,48 @@
             text-align: center;
         }
 
+                .year-selector {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background: var(--card-bg);
+            padding: 8px 12px;
+            border-radius: 8px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+            border: 1px solid rgba(0,0,0,0.03);
+        }
+
+        .year-selector span {
+            font-size: 13px;
+            font-weight: 600;
+            color: #666;
+            white-space: nowrap;
+        }
+
+        .year-toggle {
+            display: flex;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            overflow: hidden;
+            background: white;
+        }
+
+        .year-button {
+            border: none;
+            background: transparent;
+            padding: 7px 12px;
+            font-size: 14px;
+            cursor: pointer;
+            color: #444;
+            min-width: 64px;
+        }
+
+        .year-button.active {
+            background: var(--leave-color);
+            color: white;
+            font-weight: 600;
+        }
+
         .allowance-status {
             font-size: 12px;
             color: #666;
@@ -432,6 +474,10 @@
             </div>
             <div class="header-actions">
                 <div class="stats">Used: <span id="leave-count">0</span> / <span id="allowance-display">25</span> days</div>
+                <div class="year-selector" aria-label="Select leave year">
+                    <span>Year</span>
+                    <div class="year-toggle" id="year-toggle"></div>
+                </div>
                 <label class="allowance-control" for="allowance-input">
                     <span>Allowance</span>
                     <input id="allowance-input" type="number" min="20" max="40" step="1" value="25" aria-label="Annual leave allowance">
@@ -460,14 +506,28 @@
         });
 
         const currentYear = new Date().getFullYear();
+        const nextYear = currentYear + 1;
+        const yearOptions = [currentYear, nextYear];
+        let selectedYear = currentYear;
+
         const today = new Date();
         const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-        document.getElementById('year-title').innerText = `${currentYear} Leave Tracker`;
+        const yearToggle = document.getElementById('year-toggle');
 
-        const bankHolidays = [
-            "2026-01-01", "2026-04-03", "2026-04-06", "2026-05-04", 
-            "2026-05-25", "2026-08-31", "2026-12-25", "2026-12-28"
-        ];
+        function updateYearTitle() {
+            document.getElementById('year-title').innerText = `${selectedYear} Leave Tracker`;
+        }
+
+        const bankHolidaysByYear = {
+            [currentYear]: [
+                `${currentYear}-01-01`, `${currentYear}-04-03`, `${currentYear}-04-06`, `${currentYear}-05-04`,
+                `${currentYear}-05-25`, `${currentYear}-08-31`, `${currentYear}-12-25`, `${currentYear}-12-28`
+            ],
+            [nextYear]: [
+                `${nextYear}-01-01`, `${nextYear}-03-26`, `${nextYear}-03-29`, `${nextYear}-05-03`,
+                `${nextYear}-05-31`, `${nextYear}-08-30`, `${nextYear}-12-25`, `${nextYear}-12-28`
+            ]
+        };
 
         const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
         const dayNames = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"];
@@ -477,6 +537,26 @@
         const allowanceInput = document.getElementById('allowance-input');
         const allowanceDisplay = document.getElementById('allowance-display');
         const allowanceStatus = document.getElementById('allowance-status');
+
+        function populateYearOptions() {
+            yearToggle.innerHTML = '';
+            yearOptions.forEach((year) => {
+                const button = document.createElement('button');
+                button.type = 'button';
+                button.className = `year-button${year === selectedYear ? ' active' : ''}`;
+                button.textContent = String(year);
+                button.setAttribute('aria-pressed', year === selectedYear ? 'true' : 'false');
+                button.addEventListener('click', () => updateSelectedYear(year));
+                yearToggle.appendChild(button);
+            });
+        }
+
+        function updateSelectedYear(year) {
+            selectedYear = year;
+            updateYearTitle();
+            populateYearOptions();
+            generateCalendar();
+        }
 
         allowanceInput.value = allowanceDays;
 
@@ -663,6 +743,7 @@
         function generateCalendar() {
             const container = document.getElementById('year-grid');
             container.innerHTML = '';
+            const selectedBankHolidays = bankHolidaysByYear[selectedYear] || [];
 
             for (let month = 0; month < 12; month++) {
                 const card = document.createElement('div');
@@ -683,10 +764,10 @@
                     grid.appendChild(header);
                 });
 
-                let firstDayIdx = new Date(currentYear, month, 1).getDay();
+                let firstDayIdx = new Date(selectedYear, month, 1).getDay();
                 firstDayIdx = firstDayIdx === 0 ? 6 : firstDayIdx - 1;
 
-                const daysInMonth = new Date(currentYear, month + 1, 0).getDate();
+                const daysInMonth = new Date(selectedYear, month + 1, 0).getDate();
 
                 for (let i = 0; i < firstDayIdx; i++) {
                     const emptyCell = document.createElement('div');
@@ -699,15 +780,15 @@
                     dayCell.className = 'day';
                     dayCell.innerText = day;
 
-                    const dateObj = new Date(currentYear, month, day);
+                    const dateObj = new Date(selectedYear, month, day);
                     const dayOfWeek = dateObj.getDay();
-                    const dateStr = `${currentYear}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                    const dateStr = `${selectedYear}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
 
                     if (dayOfWeek === 6 || dayOfWeek === 0) {
                         dayCell.classList.add('weekend');
                     }
 
-                    if (bankHolidays.includes(dateStr)) {
+                    if (selectedBankHolidays.includes(dateStr)) {
                         dayCell.classList.add('bank-holiday');
                     }
 
@@ -779,6 +860,9 @@
             await saveAllowanceToSupabase();
             document.getElementById('status-indicator').innerText = `Allowance set to ${allowanceDays} days`;
         });
+
+        populateYearOptions();
+        updateYearTitle();
 
         logoutBtn.addEventListener('click', async () => {
             await supabaseClient.auth.signOut();
