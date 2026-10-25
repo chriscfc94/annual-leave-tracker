@@ -21,9 +21,6 @@
     <link rel="icon" type="image/png" sizes="16x16" href="./leave-tracker.png">
 
     <title>Annual Leave Tracker</title>
-    <!-- 1. Include the Supabase CDN Client Library -->
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.49.1/dist/umd/supabase.js"></script>    
-
     <style>
         :root {
             --bg-color: #f4f6f9;
@@ -429,9 +426,10 @@
             text-align: center;
         }
         .auth-card input {
+            display: block;
             width: 100%;
             padding: 10px;
-            margin: 10px 0;
+            margin: 8px 0;
             border: 1px solid var(--border-color);
             border-radius: 6px;
             box-sizing: border-box;
@@ -439,6 +437,7 @@
         .auth-card button {
             width: 100%;
             padding: 10px;
+            margin-top: 8px;
             background: #2ecc71;
             color: white;
             border: none;
@@ -448,6 +447,12 @@
             font-weight: 600;
         }
         .auth-card button:hover { background: #27ae60; }
+        .auth-card button.secondary {
+            background: white;
+            color: var(--text-color);
+            border: 1px solid var(--border-color);
+        }
+        .auth-card button.secondary:hover { background: #f8f9fa; }
         .hidden { display: none !important; }
     </style>
 </head>
@@ -458,9 +463,11 @@
         <div class="auth-card">
             <h2>Sign In</h2>
             <p style="font-size: 14px; color: #666;">Access your annual leave dashboard</p>
+            <button id="btn-google-login" class="secondary" type="button">Continue with Google</button>
             <input type="email" id="auth-email" placeholder="Email Address">
             <input type="password" id="auth-password" placeholder="Password">
             <button id="btn-login">Login</button>
+            <button id="btn-create-account" type="button">Create account</button>
             <p id="auth-error" style="color: var(--leave-color); font-size: 13px; margin-top: 10px;"></p>
         </div>
     </div>
@@ -496,14 +503,39 @@
         <div class="year-container loading" id="year-grid"></div>
     </div>
 
-    <script>
-        const SUPABASE_URL = "https://rkmyccciruhlcoqprkdp.supabase.co";
-        const SUPABASE_ANON_KEY = "sb_publishable_vLYh21F7wobULUe_lFo66Q_PJ4ZVBuT";
+    <script type="module">
+        import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-app.js';
+        import {
+            createUserWithEmailAndPassword,
+            getAuth,
+            GoogleAuthProvider,
+            onAuthStateChanged,
+            signInWithEmailAndPassword,
+            signInWithPopup,
+            signOut
+        } from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js';
+        import {
+            collection,
+            deleteDoc,
+            doc,
+            getDoc,
+            getDocs,
+            getFirestore,
+            setDoc
+        } from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js';
 
-        // Initialize client allowing local session storage persistence across tabs and refreshes
-        const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-            auth: { persistSession: true }
-        });
+        const firebaseConfig = {
+            apiKey: "AIzaSyDJKwGjAogBZeXWwGZ_wN72Tsb2V5dT0_8",
+            authDomain: "annual-leave-tracker-a56be.firebaseapp.com",
+            projectId: "annual-leave-tracker-a56be",
+            storageBucket: "annual-leave-tracker-a56be.firebasestorage.app",
+            messagingSenderId: "921529905734",
+            appId: "1:921529905734:web:7189faa698f99275d51047"
+        };
+
+        const firebaseApp = initializeApp(firebaseConfig);
+        const auth = getAuth(firebaseApp);
+        const db = getFirestore(firebaseApp);
 
         const currentYear = new Date().getFullYear();
         const nextYear = currentYear + 1;
@@ -608,67 +640,54 @@
             allowanceStatus.classList.toggle('warning', remaining < 0);
         }
 
-        async function loadAllowanceFromSupabase() {
-            try {
-                const { data: { user } } = await supabaseClient.auth.getUser();
-                if (!user) return;
+        function getLeaveDaysCollection(user) {
+            return collection(db, 'users', user.uid, 'leaveDays');
+        }
 
-                const { data, error } = await supabaseClient
-                    .from('user_settings')
-                    .select('allowance_days')
-                    .eq('user_id', user.id)
-                    .maybeSingle();
+        function getSettingsDocument(user) {
+            return doc(db, 'users', user.uid, 'settings', 'profile');
+        }
 
-                if (error) throw error;
-                if (data && data.allowance_days) {
-                    allowanceDays = Number(data.allowance_days);
-                    allowanceInput.value = allowanceDays;
-                    updateStats();
-                }
-            } catch (err) {
-                console.warn('Allowance sync unavailable:', err);
+        async function loadAllowanceFromFirestore(user) {
+            const snapshot = await getDoc(getSettingsDocument(user));
+            if (snapshot.exists() && snapshot.data().allowance_days) {
+                allowanceDays = Number(snapshot.data().allowance_days);
+                allowanceInput.value = allowanceDays;
+                updateStats();
             }
         }
 
-        async function saveAllowanceToSupabase() {
-            try {
-                const { data: { user } } = await supabaseClient.auth.getUser();
-                if (!user) return;
-
-                await supabaseClient.from('user_settings').upsert({
-                    user_id: user.id,
-                    allowance_days: allowanceDays,
-                    updated_at: new Date().toISOString()
-                }, { onConflict: 'user_id' });
-            } catch (err) {
-                console.warn('Could not sync allowance to Supabase:', err);
-            }
+        async function saveAllowanceToFirestore(user) {
+            await setDoc(getSettingsDocument(user), {
+                allowance_days: allowanceDays,
+                updated_at: new Date().toISOString()
+            }, { merge: true });
         }
 
-        // DATABASE SYNC LOGIC
-        async function loadDataFromSupabase() {
+        async function loadDataFromFirestore(user) {
             try {
-                const { data, error } = await supabaseClient
-                    .from('leave_days')
-                    .select('date_str, leave_type');
-
-                if (error) throw error;
-
+                const snapshot = await getDocs(getLeaveDaysCollection(user));
                 savedLeave = {};
-                if (data) {
-                    data.forEach(row => {
-                        savedLeave[row.date_str] = row.leave_type;
-                    });
-                }
-                
+                snapshot.forEach(leaveDocument => {
+                    const row = leaveDocument.data();
+                    savedLeave[row.date_str] = row.leave_type;
+                });
+
+                await loadAllowanceFromFirestore(user);
                 document.getElementById('status-indicator').innerText = "Synced with cloud";
                 document.getElementById('year-grid').classList.remove('loading');
-                await loadAllowanceFromSupabase();
                 generateCalendar();
             } catch (err) {
                 console.error("Error loading data:", err);
                 document.getElementById('status-indicator').innerText = "Error syncing data.";
             }
+        }
+
+        async function saveLeaveToFirestore(user, dateStr, leaveType) {
+            await setDoc(doc(getLeaveDaysCollection(user), dateStr), {
+                date_str: dateStr,
+                leave_type: leaveType
+            });
         }
 
         async function cycleLeaveState(dateStr, dayCell) {
@@ -696,48 +715,40 @@
             dayCell.classList.remove('leave-half', 'leave-full', 'pending-half', 'pending-full');
             document.getElementById('status-indicator').innerText = "Saving changes...";
 
-            const { data: { user } } = await supabaseClient.auth.getUser();
+            const user = auth.currentUser;
+            if (!user) return;
 
             try {
                 if (!currentState) {
                     savedLeave[dateStr] = 'pending-half';
                     dayCell.classList.add('pending-half');
-                    await supabaseClient.from('leave_days').upsert(
-                        { date_str: dateStr, leave_type: 'pending-half', user_id: user.id },
-                        { onConflict: 'user_id,date_str' }
-                    );
+                    await saveLeaveToFirestore(user, dateStr, 'pending-half');
                 } else if (currentState === 'pending-half') {
                     savedLeave[dateStr] = 'pending-full';
                     dayCell.classList.add('pending-full');
-                    await supabaseClient.from('leave_days').upsert(
-                        { date_str: dateStr, leave_type: 'pending-full', user_id: user.id },
-                        { onConflict: 'user_id,date_str' }
-                    );
+                    await saveLeaveToFirestore(user, dateStr, 'pending-full');
                 } else if (currentState === 'pending-full') {
                     savedLeave[dateStr] = 'half';
                     dayCell.classList.add('leave-half');
-                    await supabaseClient.from('leave_days').upsert(
-                        { date_str: dateStr, leave_type: 'half', user_id: user.id },
-                        { onConflict: 'user_id,date_str' }
-                    );
+                    await saveLeaveToFirestore(user, dateStr, 'half');
                 } else if (currentState === 'half') {
                     savedLeave[dateStr] = 'full';
                     dayCell.classList.add('leave-full');
-                    await supabaseClient.from('leave_days').upsert(
-                        { date_str: dateStr, leave_type: 'full', user_id: user.id },
-                        { onConflict: 'user_id,date_str' }
-                    );
+                    await saveLeaveToFirestore(user, dateStr, 'full');
                 } else {
                     delete savedLeave[dateStr];
-                    await supabaseClient.from('leave_days')
-                        .delete()
-                        .eq('date_str', dateStr)
-                        .eq('user_id', user.id);
+                    await deleteDoc(doc(getLeaveDaysCollection(user), dateStr));
                 }
                 document.getElementById('status-indicator').innerText = "Synced with cloud";
             } catch (err) {
                 console.error("Write error:", err);
                 document.getElementById('status-indicator').innerText = "Error saving selection.";
+                if (currentState) {
+                    savedLeave[dateStr] = currentState;
+                } else {
+                    delete savedLeave[dateStr];
+                }
+                generateCalendar();
             }
             updateStats();
         }
@@ -824,32 +835,36 @@
         // AUTHENTICATION INTERACTION LOGIC
         const authOverlay = document.getElementById('auth-overlay');
         const loginBtn = document.getElementById('btn-login');
+        const createAccountBtn = document.getElementById('btn-create-account');
+        const googleLoginBtn = document.getElementById('btn-google-login');
         const logoutBtn = document.getElementById('btn-logout');
         const errorText = document.getElementById('auth-error');
+        const googleProvider = new GoogleAuthProvider();
 
-        async function checkUserSession() {
-            const { data: { session } } = await supabaseClient.auth.getSession();
-            if (session) {
-                authOverlay.classList.add('hidden');
-                loadDataFromSupabase();
-            } else {
-                authOverlay.classList.remove('hidden');
-                document.getElementById('year-grid').classList.add('loading');
-            }
-        }
-
-        loginBtn.addEventListener('click', async () => {
+        async function authenticate(createAccount) {
             const email = document.getElementById('auth-email').value;
             const password = document.getElementById('auth-password').value;
             errorText.innerText = "";
 
-            const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password });
-            
-            if (error) {
-                errorText.innerText = error.message;
-            } else {
-                authOverlay.classList.add('hidden');
-                loadDataFromSupabase();
+            try {
+                if (createAccount) {
+                    await createUserWithEmailAndPassword(auth, email, password);
+                } else {
+                    await signInWithEmailAndPassword(auth, email, password);
+                }
+            } catch (err) {
+                errorText.innerText = err.message;
+            }
+        }
+
+        loginBtn.addEventListener('click', () => authenticate(false));
+        createAccountBtn.addEventListener('click', () => authenticate(true));
+        googleLoginBtn.addEventListener('click', async () => {
+            errorText.innerText = "";
+            try {
+                await signInWithPopup(auth, googleProvider);
+            } catch (err) {
+                errorText.innerText = err.message;
             }
         });
 
@@ -859,23 +874,35 @@
             allowanceDays = clampedValue;
             allowanceInput.value = allowanceDays;
             updateStats();
-            await saveAllowanceToSupabase();
-            document.getElementById('status-indicator').innerText = `Allowance set to ${allowanceDays} days`;
+            const user = auth.currentUser;
+            if (!user) return;
+            try {
+                await saveAllowanceToFirestore(user);
+                document.getElementById('status-indicator').innerText = `Allowance set to ${allowanceDays} days`;
+            } catch (err) {
+                console.error("Allowance write error:", err);
+                document.getElementById('status-indicator').innerText = "Error saving allowance.";
+            }
         });
 
         populateYearOptions();
         updateYearTitle();
 
         logoutBtn.addEventListener('click', async () => {
-            await supabaseClient.auth.signOut();
-            authOverlay.classList.remove('hidden');
-            document.getElementById('year-grid').classList.add('loading');
+            await signOut(auth);
             document.getElementById('auth-email').value = '';
             document.getElementById('auth-password').value = '';
         });
 
-        // Evaluate login context immediately on page render
-        checkUserSession();
+        onAuthStateChanged(auth, user => {
+            if (user) {
+                authOverlay.classList.add('hidden');
+                loadDataFromFirestore(user);
+            } else {
+                authOverlay.classList.remove('hidden');
+                document.getElementById('year-grid').classList.add('loading');
+            }
+        });
     </script>
 </body>
 </html>
