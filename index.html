@@ -407,7 +407,8 @@
         button.logout-btn:hover { background: #d1d4d8; }
 
         /* Auth Screen Styles */
-        #auth-overlay {
+        #auth-overlay,
+        #import-overlay {
             position: fixed;
             top: 0; left: 0; width: 100%; height: 100%;
             background: var(--bg-color);
@@ -453,6 +454,13 @@
             border: 1px solid var(--border-color);
         }
         .auth-card button.secondary:hover { background: #f8f9fa; }
+        .import-actions {
+            display: flex;
+            gap: 8px;
+        }
+        .import-actions button {
+            flex: 1;
+        }
         .hidden { display: none !important; }
     </style>
 </head>
@@ -469,6 +477,20 @@
             <button id="btn-login">Login</button>
             <button id="btn-create-account" type="button">Create account</button>
             <p id="auth-error" style="color: var(--leave-color); font-size: 13px; margin-top: 10px;"></p>
+        </div>
+    </div>
+
+    <div id="import-overlay" class="hidden">
+        <div class="auth-card">
+            <h2>Import old data</h2>
+            <p style="font-size: 14px; color: #666;">Sign in with your old Supabase email and password. Your Firebase login will stay active.</p>
+            <input type="email" id="import-email" placeholder="Old account email">
+            <input type="password" id="import-password" placeholder="Old account password">
+            <div class="import-actions">
+                <button class="secondary" id="btn-cancel-import" type="button">Cancel</button>
+                <button id="btn-run-import" type="button">Import</button>
+            </div>
+            <p id="import-status" style="color: var(--leave-color); font-size: 13px; margin-top: 10px;"></p>
         </div>
     </div>
 
@@ -496,6 +518,7 @@
                     <div class="legend-item"><div class="box leave-full"></div> Full Day</div>
                     <div class="legend-item"><div class="box bh"></div> Bank Holiday</div>
                 </div>
+                <button class="logout-btn hidden" id="btn-import-supabase" type="button">Import old data</button>
                 <button class="logout-btn" id="btn-logout">Logout</button>
             </div>
         </header>
@@ -521,8 +544,10 @@
             getDoc,
             getDocs,
             getFirestore,
-            setDoc
+            setDoc,
+            writeBatch
         } from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js';
+        import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
 
         const firebaseConfig = {
             apiKey: "AIzaSyDJKwGjAogBZeXWwGZ_wN72Tsb2V5dT0_8",
@@ -536,6 +561,8 @@
         const firebaseApp = initializeApp(firebaseConfig);
         const auth = getAuth(firebaseApp);
         const db = getFirestore(firebaseApp);
+        const legacySupabaseUrl = 'https://rkmyccciruhlcoqprkdp.supabase.co';
+        const legacySupabaseKey = 'sb_publishable_vLYh21F7wobULUe_lFo66Q_PJ4ZVBuT';
 
         const currentYear = new Date().getFullYear();
         const nextYear = currentYear + 1;
@@ -838,8 +865,98 @@
         const createAccountBtn = document.getElementById('btn-create-account');
         const googleLoginBtn = document.getElementById('btn-google-login');
         const logoutBtn = document.getElementById('btn-logout');
+        const importButton = document.getElementById('btn-import-supabase');
+        const importOverlay = document.getElementById('import-overlay');
+        const importEmail = document.getElementById('import-email');
+        const importPassword = document.getElementById('import-password');
+        const importStatus = document.getElementById('import-status');
+        const runImportButton = document.getElementById('btn-run-import');
         const errorText = document.getElementById('auth-error');
         const googleProvider = new GoogleAuthProvider();
+
+        async function importLegacyData() {
+            const firebaseUser = auth.currentUser;
+            if (!firebaseUser) return;
+
+            importStatus.innerText = 'Signing in to the old account...';
+            runImportButton.disabled = true;
+            let legacyClient;
+
+            try {
+                legacyClient = createClient(legacySupabaseUrl, legacySupabaseKey, {
+                    auth: {
+                        persistSession: false,
+                        autoRefreshToken: false,
+                        detectSessionInUrl: false
+                    }
+                });
+
+                const { data: authData, error: authError } = await legacyClient.auth.signInWithPassword({
+                    email: importEmail.value.trim(),
+                    password: importPassword.value
+                });
+                if (authError) throw authError;
+
+                const legacyUserId = authData.user.id;
+                const [leaveResult, settingsResult] = await Promise.all([
+                    legacyClient.from('leave_days')
+                        .select('date_str, leave_type')
+                        .eq('user_id', legacyUserId),
+                    legacyClient.from('user_settings')
+                        .select('allowance_days')
+                        .eq('user_id', legacyUserId)
+                        .maybeSingle()
+                ]);
+                if (leaveResult.error) throw leaveResult.error;
+                if (settingsResult.error) throw settingsResult.error;
+
+                const [existingLeave, existingSettings] = await Promise.all([
+                    getDocs(getLeaveDaysCollection(firebaseUser)),
+                    getDoc(getSettingsDocument(firebaseUser))
+                ]);
+                const existingDates = new Set(existingLeave.docs.map(leaveDocument => leaveDocument.id));
+                const supportedTypes = new Set(['pending-half', 'pending-full', 'half', 'full']);
+                const rowsToImport = (leaveResult.data || []).filter(row =>
+                    row.date_str && supportedTypes.has(row.leave_type) && !existingDates.has(row.date_str)
+                );
+
+                for (let start = 0; start < rowsToImport.length; start += 450) {
+                    const batch = writeBatch(db);
+                    rowsToImport.slice(start, start + 450).forEach(row => {
+                        batch.set(doc(getLeaveDaysCollection(firebaseUser), row.date_str), {
+                            date_str: row.date_str,
+                            leave_type: row.leave_type
+                        });
+                    });
+                    await batch.commit();
+                }
+
+                let allowanceImported = false;
+                const oldAllowance = Number(settingsResult.data?.allowance_days);
+                if (!existingSettings.exists()
+                    && Number.isInteger(oldAllowance)
+                    && oldAllowance >= 20
+                    && oldAllowance <= 40) {
+                    await setDoc(getSettingsDocument(firebaseUser), {
+                        allowance_days: oldAllowance,
+                        updated_at: new Date().toISOString()
+                    });
+                    allowanceImported = true;
+                }
+
+                await loadDataFromFirestore(firebaseUser);
+                importStatus.innerText = `Imported ${rowsToImport.length} leave entries${allowanceImported ? ' and your allowance' : ''}. Existing Firebase data was left unchanged.`;
+            } catch (err) {
+                console.error('Legacy data import failed:', err);
+                importStatus.innerText = `Import failed: ${err.message}`;
+            } finally {
+                importPassword.value = '';
+                runImportButton.disabled = false;
+                if (legacyClient) {
+                    await legacyClient.auth.signOut();
+                }
+            }
+        }
 
         async function authenticate(createAccount) {
             const email = document.getElementById('auth-email').value;
@@ -859,6 +976,15 @@
 
         loginBtn.addEventListener('click', () => authenticate(false));
         createAccountBtn.addEventListener('click', () => authenticate(true));
+        importButton.addEventListener('click', () => {
+            importStatus.innerText = '';
+            importOverlay.classList.remove('hidden');
+        });
+        document.getElementById('btn-cancel-import').addEventListener('click', () => {
+            importOverlay.classList.add('hidden');
+            importPassword.value = '';
+        });
+        runImportButton.addEventListener('click', importLegacyData);
         googleLoginBtn.addEventListener('click', async () => {
             errorText.innerText = "";
             try {
@@ -897,9 +1023,11 @@
         onAuthStateChanged(auth, user => {
             if (user) {
                 authOverlay.classList.add('hidden');
+                importButton.classList.remove('hidden');
                 loadDataFromFirestore(user);
             } else {
                 authOverlay.classList.remove('hidden');
+                importButton.classList.add('hidden');
                 document.getElementById('year-grid').classList.add('loading');
             }
         });
