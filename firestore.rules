@@ -1,0 +1,29 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function ownsUserData(userId) {
+      return request.auth != null && request.auth.uid == userId;
+    }
+
+    match /users/{userId}/leaveDays/{dateId} {
+      allow read, delete: if ownsUserData(userId);
+      allow create, update: if ownsUserData(userId)
+        && request.resource.data.keys().hasAll(['date_str', 'leave_type'])
+        && request.resource.data.keys().hasOnly(['date_str', 'leave_type'])
+        && request.resource.data.date_str == dateId
+        && request.resource.data.leave_type in ['pending-half', 'pending-full', 'half', 'full'];
+    }
+
+    match /users/{userId}/settings/profile {
+      allow read: if ownsUserData(userId);
+      allow create, update: if ownsUserData(userId)
+        && request.resource.data.keys().hasAll(['allowance_days', 'updated_at'])
+        && request.resource.data.keys().hasOnly(['allowance_days', 'updated_at'])
+        && request.resource.data.allowance_days is int
+        && request.resource.data.allowance_days >= 20
+        && request.resource.data.allowance_days <= 40
+        && request.resource.data.updated_at is string;
+      allow delete: if false;
+    }
+  }
+}
